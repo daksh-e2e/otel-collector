@@ -12,7 +12,7 @@
 #     bash -c "$(curl -fsSL https://raw.githubusercontent.com/daksh-e2e/otel-collector/test/install-dev.sh)"
 set -euo pipefail
 
-RELEASE_TAG="v0.1.0-dev"
+RELEASE_TAG="v0.0.2-test"
 REPO="daksh-e2e/otel-collector"
 BRANCH="test"
 RELEASE_BASE="https://github.com/${REPO}/releases/download/${RELEASE_TAG}"
