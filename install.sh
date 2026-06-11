@@ -14,8 +14,12 @@ DATA_DIR="/var/lib/e2e-otel-collector"
 SERVICE_NAME="e2e-otel-collector"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
-CDN_BASE="https://observability.objectstore.e2enetworks.net/collector"
-REGISTER_API="https://obs.e2enetworks.net/v1/install/register"
+# Dev wiring: register against the cluster's observability-api REST NodePort,
+# pull the binary from the public GitHub Release, and the config from raw.
+# (The public obs.e2enetworks.net DNS + object-store CDN are not deployed yet.)
+RELEASE_BASE="https://github.com/daksh-e2e/otel-collector/releases/download/v0.0.2-test"
+RAW_BASE="https://raw.githubusercontent.com/daksh-e2e/otel-collector/test"
+REGISTER_API="http://172.16.230.168:31881/v1/install/register"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 info()  { echo "[e2e-install] $*"; }
@@ -80,10 +84,10 @@ main() {
   REGISTER_RESPONSE=$(curl -fsSL -X POST "${REGISTER_API}" \
     -H "Content-Type: application/json" \
     -d "{
-      \"api_key\":      \"${E2E_API_KEY}\",
-      \"project_id\":   ${E2E_PROJECT_ID},
-      \"customer_id\":  ${E2E_CUSTOMER_ID},
-      \"resource_type\": \"vm\"
+      \"apiKey\":       \"${E2E_API_KEY}\",
+      \"projectId\":    \"${E2E_PROJECT_ID}\",
+      \"customerId\":   \"${E2E_CUSTOMER_ID}\",
+      \"resourceType\": \"vm\"
     }") || error "Registration API call failed. Check your E2E_API_KEY and network connectivity."
 
   E2E_TOKEN=$(parse_field "${REGISTER_RESPONSE}" "ingestion_token")
@@ -96,7 +100,7 @@ main() {
 
   # Phase 3: Download binary
   info "Downloading E2E OTel Collector binary (linux/${ARCH})..."
-  local binary_url="${CDN_BASE}/e2e-otel-collector-linux-${ARCH}"
+  local binary_url="${RELEASE_BASE}/e2e-otel-collector-linux-${ARCH}"
   local binary_tmp="${BINARY_PATH}.tmp"
 
   mkdir -p "$(dirname "${BINARY_PATH}")"
@@ -127,8 +131,8 @@ EOF
 
   # 4b. Collector config (fetched from CDN)
   info "Fetching collector config..."
-  curl -fsSL -o "${CONFIG_DIR}/config.yaml" "${CDN_BASE}/vm-config.yaml" || \
-    error "Failed to download vm-config.yaml from CDN."
+  curl -fsSL -o "${CONFIG_DIR}/config.yaml" "${RAW_BASE}/samples/vm-config.yaml" || \
+    error "Failed to download vm-config.yaml."
   chmod 644 "${CONFIG_DIR}/config.yaml"
 
   # 4c. Systemd service unit
