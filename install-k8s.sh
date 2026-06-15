@@ -108,6 +108,9 @@ rules:
   - apiGroups: [""]
     resources: [pods, namespaces, nodes, endpoints]
     verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [nodes/stats, nodes/proxy, nodes/metrics]
+    verbs: [get, list, watch]
   - apiGroups: [apps]
     resources: [replicasets, deployments, statefulsets, daemonsets]
     verbs: [get, list, watch]
@@ -193,6 +196,24 @@ data:
                          overlay, proc, procfs, pstore, securityfs, sysfs]
               match_type: strict
 
+      kubeletstats:
+        collection_interval: 30s
+        auth_type: serviceAccount
+        endpoint: "https://\${env:NODE_IP}:10250"
+        insecure_skip_verify: true
+        metric_groups:
+          - node
+          - pod
+        extra_metadata_labels:
+          - container.id
+        k8s_api_config:
+          auth_type: serviceAccount
+        metrics:
+          k8s.node.cpu.usage:
+            enabled: true
+          k8s.pod.cpu.usage:
+            enabled: true
+
     processors:
       memory_limiter:
         check_interval: 1s
@@ -267,7 +288,7 @@ data:
           processors: [memory_limiter, k8sattributes, resource/tenant, batch]
           exporters: [otlp/gateway]
         metrics/infrastructure:
-          receivers: [hostmetrics]
+          receivers: [hostmetrics, kubeletstats]
           processors: [memory_limiter, resource/tenant, batch]
           exporters: [otlp/gateway]
 
@@ -306,6 +327,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
             - name: E2E_TOKEN
               valueFrom:
                 secretKeyRef:
