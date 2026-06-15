@@ -6,6 +6,7 @@
 #
 # The API key is the only credential needed. The register API derives the
 # tenant (project) from it server-side and returns a scoped ingestion token.
+# The VM's hostname is sent automatically so each host gets its own log group.
 
 set -euo pipefail
 
@@ -80,13 +81,18 @@ main() {
   [ -f /etc/os-release ] && OS_ID=$(. /etc/os-release && echo "${ID:-unknown}")
   info "Platform: linux/${ARCH} (${OS_ID:-unknown distro})"
 
+  # Capture hostname early — sent to register so each host gets its own log group.
+  local host_name
+  host_name=$(hostname -s 2>/dev/null || hostname)
+
   # Phase 2: Register with E2E Observability API
-  info "Registering with E2E Observability API..."
+  info "Registering with E2E Observability API (host: ${host_name})..."
   REGISTER_RESPONSE=$(curl -fsSL -X POST "${REGISTER_API}" \
     -H "Content-Type: application/json" \
     -d "{
       \"apiKey\":       \"${E2E_API_KEY}\",
-      \"resourceType\": \"vm\"
+      \"resourceType\": \"vm\",
+      \"hostname\":     \"${host_name}\"
     }") || error "Registration API call failed. Check your E2E_API_KEY and network connectivity."
 
   # The register API derives the tenant from the API key and returns the token,
@@ -121,8 +127,6 @@ main() {
   chmod 700 "${DATA_DIR}"
 
   # 4a. Env file (mode 600 — credentials)
-  local host_name
-  host_name=$(hostname -f 2>/dev/null || hostname)
   info "Writing env file to ${CONFIG_DIR}/env..."
   cat > "${CONFIG_DIR}/env" <<EOF
 E2E_TOKEN=${E2E_TOKEN}
