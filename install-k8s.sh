@@ -13,7 +13,8 @@ set -euo pipefail
 REGISTER_API="http://172.16.230.168:31881/v1/install/register"
 GATEWAY_ENDPOINT="172.16.230.168:31318"
 COLLECTOR_IMAGE="otel/opentelemetry-collector-contrib:0.105.0"
-NAMESPACE="${E2E_NAMESPACE:-e2e-observability}"
+NAMESPACE="${E2E_NAMESPACE:-$(kubectl config view --minify --output 'jsonpath={..namespace}' 2>/dev/null | tr -d '[:space:]')}"
+NAMESPACE="${NAMESPACE:-e2e-observability}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 info()  { echo "[e2e-k8s-install] $*"; }
