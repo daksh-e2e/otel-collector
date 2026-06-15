@@ -82,8 +82,9 @@ main() {
   info "Platform: linux/${ARCH} (${OS_ID:-unknown distro})"
 
   # Capture hostname early — sent to register so each host gets its own log group.
+  # E2E_HOSTNAME overrides auto-detection when set explicitly.
   local host_name
-  host_name=$(hostname -s 2>/dev/null || hostname)
+  host_name="${E2E_HOSTNAME:-$(hostname -s 2>/dev/null || hostname)}"
 
   # Phase 2: Register with E2E Observability API
   info "Registering with E2E Observability API (host: ${host_name})..."
