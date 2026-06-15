@@ -14,11 +14,13 @@ REGISTER_API="http://172.16.230.168:31881/v1/install/register"
 GATEWAY_ENDPOINT="172.16.230.168:31318"
 COLLECTOR_IMAGE="otel/opentelemetry-collector-contrib:0.105.0"
 NAMESPACE="${E2E_NAMESPACE:-$(kubectl config view --minify --output 'jsonpath={..namespace}' 2>/dev/null | tr -d '[:space:]')}"
-NAMESPACE="${NAMESPACE:-e2e-observability}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 info()  { echo "[e2e-k8s-install] $*"; }
 error() { echo "[e2e-k8s-install] ERROR: $*" >&2; exit 1; }
+
+# ns_flag: returns "-n <namespace>" when namespace is set, empty string otherwise.
+ns_flag() { [ -n "${NAMESPACE:-}" ] && echo "-n ${NAMESPACE}" || echo ""; }
 
 parse_field() {
   local json="$1" field="$2"
@@ -71,24 +73,31 @@ main() {
   info "Registered. Log group: ${E2E_LOG_GROUP}"
 
   # ── Phase 2: Apply K8s resources ────────────────────────────────────────
-  info "Deploying E2E OTel Collector to namespace '${NAMESPACE}'..."
+  local ns_display="${NAMESPACE:-default}"
+  info "Deploying E2E OTel Collector to namespace '${ns_display}'..."
 
-  kubectl apply -f - <<EOF
-# ── Namespace ──────────────────────────────────────────────────────────────
-apiVersion: v1
+  # Build namespace block only when a namespace was specified.
+  local ns_block=""
+  local ns_meta=""
+  if [ -n "${NAMESPACE:-}" ]; then
+    ns_block="apiVersion: v1
 kind: Namespace
 metadata:
   name: ${NAMESPACE}
   labels:
     app.kubernetes.io/managed-by: e2e-observability
+---"
+    ns_meta="  namespace: ${NAMESPACE}"
+  fi
 
----
+  kubectl apply -f - <<EOF
+${ns_block}
 # ── RBAC ───────────────────────────────────────────────────────────────────
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: e2e-otel-collector
-  namespace: ${NAMESPACE}
+${ns_meta}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -111,7 +120,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: e2e-otel-collector
-    namespace: ${NAMESPACE}
+    namespace: ${NAMESPACE:-default}
 roleRef:
   kind: ClusterRole
   name: e2e-otel-collector
@@ -123,7 +132,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: e2e-otel-credentials
-  namespace: ${NAMESPACE}
+${ns_meta}
 type: Opaque
 stringData:
   token: "${E2E_TOKEN}"
@@ -136,7 +145,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: e2e-otel-config
-  namespace: ${NAMESPACE}
+${ns_meta}
 data:
   config.yaml: |
     extensions:
@@ -236,7 +245,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: e2e-otel-collector
-  namespace: ${NAMESPACE}
+${ns_meta}
   labels:
     app: e2e-otel-collector
 spec:
@@ -324,24 +333,26 @@ spec:
 EOF
 
   info "Waiting for DaemonSet to roll out..."
-  kubectl rollout status daemonset/e2e-otel-collector -n "${NAMESPACE}" --timeout=120s
+  # shellcheck disable=SC2046
+  kubectl rollout status daemonset/e2e-otel-collector $(ns_flag) --timeout=120s
 
   # ── Done ──────────────────────────────────────────────────────────────────
   local node_count
   node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  local ns_display="${NAMESPACE:-default}"
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo " E2E Observability Agent installed on K8s!"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo " Cluster:   ${cluster_name}"
-  echo " Namespace: ${NAMESPACE}"
+  echo " Namespace: ${ns_display}"
   echo " Nodes:     ${node_count}"
   echo " Log group: ${E2E_LOG_GROUP}"
   echo " Project:   ${E2E_PROJECT_ID}"
   echo ""
-  echo " Status:  kubectl get daemonset e2e-otel-collector -n ${NAMESPACE}"
-  echo " Logs:    kubectl logs -l app=e2e-otel-collector -n ${NAMESPACE} -f"
-  echo " Health:  kubectl exec -n ${NAMESPACE} daemonset/e2e-otel-collector -- wget -qO- localhost:13133"
+  echo " Status:  kubectl get daemonset e2e-otel-collector $(ns_flag)"
+  echo " Logs:    kubectl logs -l app=e2e-otel-collector $(ns_flag) -f"
+  echo " Health:  kubectl exec $(ns_flag) daemonset/e2e-otel-collector -- wget -qO- localhost:13133"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
