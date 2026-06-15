@@ -228,6 +228,9 @@ data:
 
       resource/tenant:
         attributes:
+          - key: hostname
+            value: "\${env:NODE_NAME}"
+            action: upsert
           - key: host.name
             value: "\${env:NODE_NAME}"
             action: upsert
