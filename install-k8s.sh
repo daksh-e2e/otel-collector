@@ -168,6 +168,31 @@ data:
             id: container-parser
             add_metadata_from_filepath: true
 
+      hostmetrics:
+        collection_interval: 30s
+        root_path: /hostfs
+        scrapers:
+          cpu:
+            metrics:
+              system.cpu.utilization:
+                enabled: true
+          memory:
+            metrics:
+              system.memory.utilization:
+                enabled: true
+          disk: {}
+          network: {}
+          load: {}
+          filesystem:
+            exclude_mount_points:
+              mount_points: ["/dev/*", "/proc/*", "/sys/*", "/hostfs/dev/*", "/hostfs/proc/*", "/hostfs/sys/*"]
+              match_type: regexp
+            exclude_fs_types:
+              fs_types: [autofs, binfmt_misc, bpf, cgroup2, configfs, debugfs,
+                         devpts, devtmpfs, fusectl, hugetlbfs, mqueue, nsfs,
+                         overlay, proc, procfs, pstore, securityfs, sysfs]
+              match_type: strict
+
     processors:
       memory_limiter:
         check_interval: 1s
@@ -237,6 +262,10 @@ data:
         logs:
           receivers: [filelog]
           processors: [memory_limiter, k8sattributes, resource/tenant, batch]
+          exporters: [otlp/gateway]
+        metrics/infrastructure:
+          receivers: [hostmetrics]
+          processors: [memory_limiter, resource/tenant, batch]
           exporters: [otlp/gateway]
 
 ---
@@ -316,6 +345,10 @@ spec:
               readOnly: true
             - name: storage
               mountPath: /var/lib/e2e-otel-collector
+            - name: hostfs
+              mountPath: /hostfs
+              readOnly: true
+              mountPropagation: HostToContainer
       volumes:
         - name: config
           configMap:
@@ -330,6 +363,9 @@ spec:
           hostPath:
             path: /var/lib/e2e-otel-collector
             type: DirectoryOrCreate
+        - name: hostfs
+          hostPath:
+            path: /
 EOF
 
   info "Waiting for DaemonSet to roll out..."
