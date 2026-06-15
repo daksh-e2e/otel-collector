@@ -144,9 +144,6 @@ data:
       file_storage:
         directory: /var/lib/e2e-otel-collector
         timeout: 10s
-        compaction:
-          on_start: true
-          directory: /var/lib/e2e-otel-collector/tmp
 
     receivers:
       filelog:
@@ -259,6 +256,9 @@ spec:
         - name: collector
           image: ${COLLECTOR_IMAGE}
           args: ["--config=/etc/otel/config.yaml"]
+          securityContext:
+            runAsUser: 0
+            readOnlyRootFilesystem: false
           env:
             - name: NODE_NAME
               valueFrom:
