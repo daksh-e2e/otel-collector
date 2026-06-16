@@ -6,6 +6,11 @@
 # Optional overrides:
 #   E2E_CLUSTER_NAME=<name>   — human name for this cluster (default: current kubectl context)
 #   E2E_NAMESPACE=<ns>        — namespace to deploy into (default: e2e-observability)
+#   E2E_LOG_GROUP=<name>      — use your own log group name instead of the
+#                               auto-derived one. Must match
+#                               logs.<env>.<app>.<service>[.<host>], e.g.
+#                               logs.prod.k8s.cluster1. Names are tenant-scoped:
+#                               a name already owned by another tenant is rejected.
 
 set -euo pipefail
 
@@ -52,15 +57,32 @@ main() {
   cluster_name=$(echo "$cluster_name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//' | cut -c1-63)
   info "Cluster name: ${cluster_name}"
 
+  # Optional caller-supplied log group name. When set, it is used verbatim
+  # (must match logs.<env>.<app>.<service>[.<host>]); otherwise the server
+  # auto-derives one from the API key + cluster name.
+  local req_log_group="${E2E_LOG_GROUP:-}"
+
   # ── Phase 1: Register ───────────────────────────────────────────────────
-  info "Registering with E2E Observability API..."
-  REGISTER_RESPONSE=$(curl -fsSL -X POST "${REGISTER_API}" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"apiKey\":       \"${E2E_API_KEY}\",
-      \"resourceType\": \"k8s\",
-      \"hostname\":     \"${cluster_name}\"
-    }") || error "Registration API call failed. Check your E2E_API_KEY and network connectivity."
+  if [ -n "${req_log_group}" ]; then
+    info "Registering with E2E Observability API (log group: ${req_log_group})..."
+    REGISTER_RESPONSE=$(curl -fsSL -X POST "${REGISTER_API}" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"apiKey\":       \"${E2E_API_KEY}\",
+        \"resourceType\": \"k8s\",
+        \"hostname\":     \"${cluster_name}\",
+        \"logGroup\":     \"${req_log_group}\"
+      }") || error "Registration API call failed. Check your E2E_API_KEY, log group name, and network connectivity."
+  else
+    info "Registering with E2E Observability API..."
+    REGISTER_RESPONSE=$(curl -fsSL -X POST "${REGISTER_API}" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"apiKey\":       \"${E2E_API_KEY}\",
+        \"resourceType\": \"k8s\",
+        \"hostname\":     \"${cluster_name}\"
+      }") || error "Registration API call failed. Check your E2E_API_KEY and network connectivity."
+  fi
 
   E2E_TOKEN=$(parse_field    "${REGISTER_RESPONSE}" "ingestion_token")
   E2E_LOG_GROUP=$(parse_field "${REGISTER_RESPONSE}" "log_group")

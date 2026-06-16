@@ -7,6 +7,14 @@
 # The API key is the only credential needed. The register API derives the
 # tenant (project) from it server-side and returns a scoped ingestion token.
 # The VM's hostname is sent automatically so each host gets its own log group.
+#
+# Optional overrides:
+#   E2E_HOSTNAME=<name>   — override the auto-detected hostname.
+#   E2E_LOG_GROUP=<name>  — use your own log group name instead of the
+#                           auto-derived one. Must match
+#                           logs.<env>.<app>.<service>[.<host>], e.g.
+#                           logs.prod.api.web. Names are tenant-scoped: a name
+#                           already owned by another tenant is rejected.
 
 set -euo pipefail
 
@@ -86,15 +94,33 @@ main() {
   local host_name
   host_name="${E2E_HOSTNAME:-$(hostname -s 2>/dev/null || hostname)}"
 
+  # Optional caller-supplied log group name. When set, it is used verbatim
+  # (must match logs.<env>.<app>.<service>[.<host>]); otherwise the server
+  # auto-derives one from the API key + hostname. Capture it before the
+  # response overwrites E2E_LOG_GROUP below.
+  local req_log_group="${E2E_LOG_GROUP:-}"
+
   # Phase 2: Register with E2E Observability API
-  info "Registering with E2E Observability API (host: ${host_name})..."
-  REGISTER_RESPONSE=$(curl -fsSL -X POST "${REGISTER_API}" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"apiKey\":       \"${E2E_API_KEY}\",
-      \"resourceType\": \"vm\",
-      \"hostname\":     \"${host_name}\"
-    }") || error "Registration API call failed. Check your E2E_API_KEY and network connectivity."
+  if [ -n "${req_log_group}" ]; then
+    info "Registering with E2E Observability API (log group: ${req_log_group})..."
+    REGISTER_RESPONSE=$(curl -fsSL -X POST "${REGISTER_API}" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"apiKey\":       \"${E2E_API_KEY}\",
+        \"resourceType\": \"vm\",
+        \"hostname\":     \"${host_name}\",
+        \"logGroup\":     \"${req_log_group}\"
+      }") || error "Registration API call failed. Check your E2E_API_KEY, log group name, and network connectivity."
+  else
+    info "Registering with E2E Observability API (host: ${host_name})..."
+    REGISTER_RESPONSE=$(curl -fsSL -X POST "${REGISTER_API}" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"apiKey\":       \"${E2E_API_KEY}\",
+        \"resourceType\": \"vm\",
+        \"hostname\":     \"${host_name}\"
+      }") || error "Registration API call failed. Check your E2E_API_KEY and network connectivity."
+  fi
 
   # The register API derives the tenant from the API key and returns the token,
   # the resolved project_id, and the log group it created/owns.
