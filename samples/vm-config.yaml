@@ -112,6 +112,16 @@ processors:
       - key: host.name
         value: "${env:HOST_NAME}"
         action: upsert
+      # Stable VM identity (instance UUID = lowercased DMI product_uuid, matches
+      # the OpenStack/MyAccount console). Immutable for the VM's lifetime, never
+      # reused — the correctness anchor when IPs change or get reassigned.
+      - key: host.id
+        value: "${env:HOST_ID}"
+        action: upsert
+      # Private (RFC1918) IP — the handle customers recognize from their console.
+      - key: host.ip
+        value: "${env:HOST_IP}"
+        action: upsert
       - key: log_group
         value: "${env:E2E_LOG_GROUP}"
         action: upsert

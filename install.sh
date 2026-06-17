@@ -94,6 +94,18 @@ main() {
   local host_name
   host_name="${E2E_HOSTNAME:-$(hostname -s 2>/dev/null || hostname)}"
 
+  # Stable VM identity = lowercased DMI product_uuid (the OpenStack/MyAccount
+  # instance UUID); falls back to /etc/machine-id. Immutable, never reused.
+  local host_id
+  host_id="${E2E_VM_ID:-$(tr 'A-Z' 'a-z' < /sys/class/dmi/id/product_uuid 2>/dev/null || cat /etc/machine-id 2>/dev/null)}"
+
+  # Private (RFC1918) IPv4 — the address customers recognize from their console.
+  # Picks the private IP even on VMs that also have a public IP.
+  local host_ip
+  host_ip="$(ip -o -4 addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
+    | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' | head -1)"
+  host_ip="${host_ip:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+
   # Optional caller-supplied log group name. When set, it is used verbatim
   # (must match logs.<env>.<app>.<service>[.<host>]); otherwise the server
   # auto-derives one from the API key + hostname. Capture it before the
@@ -158,6 +170,8 @@ main() {
   cat > "${CONFIG_DIR}/env" <<EOF
 E2E_TOKEN=${E2E_TOKEN}
 HOST_NAME=${host_name}
+HOST_ID=${host_id}
+HOST_IP=${host_ip}
 E2E_LOG_GROUP=${E2E_LOG_GROUP}
 E2E_PROJECT_ID=${E2E_PROJECT_ID}
 EOF
@@ -214,6 +228,8 @@ EOF
   echo " E2E Observability Agent installed successfully!"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo " Host:      ${host_name}"
+  echo " VM ID:     ${host_id}"
+  echo " VM IP:     ${host_ip}"
   echo " Log group: ${E2E_LOG_GROUP}"
   echo " Project:   ${E2E_PROJECT_ID}"
   echo ""
