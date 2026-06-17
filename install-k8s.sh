@@ -6,6 +6,9 @@
 # Optional overrides:
 #   E2E_CLUSTER_NAME=<name>   — human name for this cluster (default: current kubectl context)
 #   E2E_NAMESPACE=<ns>        — namespace to deploy into (default: e2e-observability)
+#   E2E_ENABLE_HUBBLE=true    — also collect Cilium Hubble network flows
+#                               (auto-detected when cilium-config exports flows
+#                               to a file; set true/false to override)
 #   E2E_LOG_GROUP=<name>      — use your own log group name instead of the
 #                               auto-derived one. Must match
 #                               logs.<env>.<app>.<service>[.<host>], e.g.
@@ -112,6 +115,47 @@ metadata:
     ns_meta="  namespace: ${NAMESPACE}"
   fi
 
+  # ── Optional Cilium Hubble network-flow collection ──────────────────────────
+  # Enabled when E2E_ENABLE_HUBBLE=true, or auto-detected when the cluster's
+  # cilium-config already exports flows to a file. Reads that file, tags records
+  # log_type=network_flow so the aggregator routes them to logs.network_flows.
+  local enable_hubble="${E2E_ENABLE_HUBBLE:-auto}"
+  if [ "$enable_hubble" = "auto" ]; then
+    if [ -n "$(kubectl -n kube-system get cm cilium-config -o jsonpath='{.data.hubble-export-file-path}' 2>/dev/null)" ]; then
+      enable_hubble="true"
+    else
+      enable_hubble="false"
+    fi
+  fi
+  HUBBLE_RECEIVER=""; HUBBLE_PIPELINE=""; HUBBLE_MOUNT=""; HUBBLE_VOLUME=""
+  if [ "$enable_hubble" = "true" ]; then
+    info "Hubble network-flow collection: ENABLED"
+    HUBBLE_RECEIVER="      filelog/hubble:
+        include:
+          - /var/run/cilium/hubble/events.log
+        start_at: end
+        storage: file_storage
+        operators:
+          - type: add
+            field: attributes.log_type
+            value: \"network_flow\"
+          - type: add
+            field: resource[\"k8s.cluster.name\"]
+            value: \"${cluster_name}\""
+    HUBBLE_PIPELINE="        logs/flows:
+          receivers: [filelog/hubble]
+          processors: [memory_limiter, resource/tenant, batch]
+          exporters: [otlp/gateway]"
+    HUBBLE_MOUNT="            - name: hubble
+              mountPath: /var/run/cilium/hubble
+              readOnly: true"
+    HUBBLE_VOLUME="        - name: hubble
+          hostPath:
+            path: /var/run/cilium/hubble
+            type: DirectoryOrCreate"
+  fi
+  export HUBBLE_RECEIVER HUBBLE_PIPELINE HUBBLE_MOUNT HUBBLE_VOLUME
+
   kubectl apply -f - <<EOF
 ${ns_block}
 # ── RBAC ───────────────────────────────────────────────────────────────────
@@ -181,6 +225,17 @@ data:
         timeout: 10s
 
     receivers:
+      # App SDK traces + metrics pushed over OTLP (gRPC 4317 / HTTP 4318).
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+            max_recv_msg_size_mib: 16
+          http:
+            endpoint: "0.0.0.0:4318"
+            cors:
+              allowed_origins: ["*"]
+${HUBBLE_RECEIVER}
       filelog:
         include:
           - /var/log/pods/*/*/*.log
@@ -305,6 +360,14 @@ data:
     service:
       extensions: [health_check, file_storage]
       pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, resource/tenant, batch]
+          exporters: [otlp/gateway]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, resource/tenant, batch]
+          exporters: [otlp/gateway]
         logs:
           receivers: [filelog]
           processors: [memory_limiter, k8sattributes, resource/tenant, batch]
@@ -313,6 +376,7 @@ data:
           receivers: [hostmetrics, kubeletstats]
           processors: [memory_limiter, resource/tenant, batch]
           exporters: [otlp/gateway]
+${HUBBLE_PIPELINE}
 
 ---
 # ── DaemonSet ──────────────────────────────────────────────────────────────
@@ -371,6 +435,10 @@ spec:
           ports:
             - containerPort: 13133
               name: health
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 4318
+              name: otlp-http
           resources:
             requests:
               cpu: 100m
@@ -399,6 +467,7 @@ spec:
               mountPath: /hostfs
               readOnly: true
               mountPropagation: HostToContainer
+${HUBBLE_MOUNT}
       volumes:
         - name: config
           configMap:
@@ -416,6 +485,28 @@ spec:
         - name: hostfs
           hostPath:
             path: /
+${HUBBLE_VOLUME}
+---
+# ── OTLP Service (app SDK trace/metric endpoint) ─────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2e-otel-collector
+${ns_meta}
+  labels:
+    app: e2e-otel-collector
+spec:
+  selector:
+    app: e2e-otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
 EOF
 
   info "Waiting for DaemonSet to roll out..."
